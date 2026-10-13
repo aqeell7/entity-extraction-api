@@ -9,7 +9,7 @@ export async function extract(text: string): Promise<Extraction> {
       {
         role: "system",
         content:
-          "Classify the text into one category and list the key entities (people, places, organizations, things) mentioned in it.",
+          "Classify the text into one category. Extract named entities into the matching group: people, organizations, locations, and dates(any date or time reference, like 'Friday' or '12 Jan'). Leave a group as an empty list if nothing fits. Do not include general words that aren't named entities.",
       },
       { role: "user", content: text },
     ],
