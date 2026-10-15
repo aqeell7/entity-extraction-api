@@ -6,7 +6,10 @@ export const ExtractionSchema = z.object({
         people: z.array(z.string()),
         organization: z.array(z.string()),
         locations: z.array(z.string()),
-        dates: z.array(z.string())
+        dates: z.array(z.object({
+            text:z.string(),
+            isoDate: z.string().nullable(),
+        }))
     })
 })
 
