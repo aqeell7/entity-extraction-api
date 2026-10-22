@@ -5,6 +5,7 @@ import { ExtractionSchema, type Extraction } from "./schema";
 import { tools, runTool } from "./tools";
 // 1. Import our retry/fallback helper function
 import { withFallback } from "./retry";
+import { calculateCost } from "./cost";
 
 // 2. Define our primary and backup (fallback) models as constants
 const PRIMARY_MODEL = "gpt-5-nano";
@@ -38,7 +39,10 @@ export async function extract(text: string): Promise<Extraction> {
     });
 
   // 5. SAFETY BACKSTOP: Prevents the AI from looping forever (max 3 round trips)
-  const maxTurns = 3;
+  const maxTurns = 4;
+
+  let badOutputRetries = 0;
+  let totalCost = 0;
 
   // 6. THE AGENT LOOP: Each iteration of this loop is ONE round trip to OpenAI
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -50,6 +54,12 @@ export async function extract(text: string): Promise<Extraction> {
     const completion = await withFallback(
       () => callModel(PRIMARY_MODEL),
       () => callModel(FALLBACK_MODEL)
+    );
+
+    const cost = calculateCost(completion.model, completion.usage);
+    totalCost += cost;
+    console.log(
+      `model ${completion.model} | in ${completion.usage?.prompt_tokens} | out ${completion.usage?.completion_tokens} | $${cost.toFixed(6)}`
     );
 
     // Grab the model's response message from the response object
@@ -90,16 +100,29 @@ export async function extract(text: string): Promise<Extraction> {
     }
 
     // ========================================================================
-    // BRANCH 2: THE AI IS FINISHED (Gave us the final structured answer)
+    // BRANCH 2: THE AI IS FINISHED (Or attempted to give the final answer)
     // ========================================================================
     
     // SAFETY CHECK: When OpenAI's .parse() finishes successfully, it automatically 
     // validates and places the final structured object inside `message.parsed`.
-    // If it's missing here, something went wrong.
     if (!message.parsed) {
+      
+      // SELF-HEALING RETRY: If the model failed to give a valid parsed output 
+      // (and didn't ask for a tool), we give it ONE chance to correct itself.
+      if (badOutputRetries < 1) {
+        badOutputRetries++; // Count this retry attempt
+        console.warn("invalid output, asking the model once more");
+        
+        // Loop back to the top of the outer loop. The model will see its 
+        // previous malformed response in the history and get a second chance to format it right.
+        continue; 
+      }
+      
+      // If it already used its 1 retry and still failed, give up and throw an error.
       throw new Error("Model did not return a valid extraction");
     }
 
+    console.log(`request total: $${totalCost.toFixed(6)}`);
     // SUCCESS! Return the fully typed, Zod-validated data back to your app.
     return message.parsed;
   }
